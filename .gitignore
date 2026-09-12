@@ -1,0 +1,6 @@
+.zig-cache/
+zig-out/
+
+# documents de travail : copies de lecture, la source est dans gemm-cours
+PLAN.md
+DECISIONS.md
