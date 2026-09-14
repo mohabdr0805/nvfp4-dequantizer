@@ -4,3 +4,6 @@ zig-out/
 # documents de travail : copies de lecture, la source est dans gemm-cours
 PLAN.md
 DECISIONS.md
+
+# donnees de mesure : recuperees par fetch_bench.py, pas versionnees
+bench/
