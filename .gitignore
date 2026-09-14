@@ -7,3 +7,15 @@ DECISIONS.md
 
 # donnees de mesure : recuperees par fetch_bench.py, pas versionnees
 bench/
+
+# fichiers d observation de l assembleur
+isole.zig
+asm.s
+*.o
+
+*.obj
+
+# rebut de compilation
+*.obj
+asm.s
+isole.zig

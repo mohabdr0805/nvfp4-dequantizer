@@ -137,7 +137,7 @@ pub fn main(init: std.process.Init) !void {
     const global: f32 = @bitCast(f_global[0..4].*);
     std.debug.print("global = {d}\n", .{global});
 
-    const n_iter = 5;
+    const n_iter = 40;
     var times: [n_iter]i64 = undefined;
 
     for (0..n_iter) |iter| {

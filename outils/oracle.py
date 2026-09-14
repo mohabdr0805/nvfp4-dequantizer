@@ -25,6 +25,9 @@ BF16_FILE = "model-00001-of-00004.safetensors"
 
 TENSEUR = "model.layers.0.self_attn.q_proj.weight"
 
+# a lancer depuis la racine du depot : python outils/oracle.py
+REF = "reference/"
+
 # les 16 valeurs E2M1, indexees par le code
 E2M1 = np.array(
     [0, 0.5, 1, 1.5, 2, 3, 4, 6, -0.0, -0.5, -1, -1.5, -2, -3, -4, -6],
@@ -110,11 +113,11 @@ def main():
     print(f"=> ecart relatif moyen NVFP4 vs BF16 : {ecart:.2%}")
 
     # ------------------------------------------------------ fichiers d'oracle
-    open("q_proj_row0_packed.bin", "wb").write(paquet)
-    open("q_proj_row0_scales.bin", "wb").write(ech_br)
-    open("q_proj_global_scale.bin", "wb").write(glob_br)
-    ref.tofile("q_proj_row0_attendu.f32")
-    bf16.tofile("q_proj_row0_bf16_origine.f32")
+    open(REF + "q_proj_row0_packed.bin", "wb").write(paquet)
+    open(REF + "q_proj_row0_scales.bin", "wb").write(ech_br)
+    open(REF + "q_proj_global_scale.bin", "wb").write(glob_br)
+    ref.tofile(REF + "q_proj_row0_attendu.f32")
+    bf16.tofile(REF + "q_proj_row0_bf16_origine.f32")
     print("\nfichiers d'oracle reecrits.")
 
 

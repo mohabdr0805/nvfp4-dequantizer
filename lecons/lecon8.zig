@@ -98,11 +98,11 @@ pub fn main(init: std.process.Init) !void {
 
     var out: [4096]f32 = undefined;
 
-    const f_global = try open_tensor(io, gpa, "q_proj_global_scale.bin");
+    const f_global = try open_tensor(io, gpa, "reference/q_proj_global_scale.bin");
     defer gpa.free(f_global);
-    const f_partial = try open_tensor(io, gpa, "q_proj_row0_scales.bin");
+    const f_partial = try open_tensor(io, gpa, "reference/q_proj_row0_scales.bin");
     defer gpa.free(f_partial);
-    const f_fp4 = try open_tensor(io, gpa, "q_proj_row0_packed.bin");
+    const f_fp4 = try open_tensor(io, gpa, "reference/q_proj_row0_packed.bin");
     defer gpa.free(f_fp4);
 
     std.debug.print("lens : {d}, {d}, {d}\n", .{ f_global.len, f_partial.len, f_fp4.len });
@@ -116,7 +116,7 @@ pub fn main(init: std.process.Init) !void {
         decodeBloc(global, partial, fp4, out[16 * i ..][0..16]);
     }
 
-    const f_ref = try open_tensor(io, gpa, "q_proj_row0_attendu.f32");
+    const f_ref = try open_tensor(io, gpa, "reference/q_proj_row0_attendu.f32");
     defer gpa.free(f_ref);
 
     for (0..4096) |i| {
