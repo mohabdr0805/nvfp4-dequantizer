@@ -14,6 +14,12 @@ fn open_tensor(io: std.Io, gpa: std.mem.Allocator, filename: []const u8) ![]cons
     return t;
 }
 
+const TABLE: [16]f32 = blk: {
+    var t: [16]f32 = undefined;
+    for (0..16) |i| t[i] = decodeE2M1(i);
+    break :blk t;
+};
+
 fn decodeE2M1(code: u4) f32 {
     const sign = code >> 3 != 0;
     const decimal = code & 1;
@@ -79,57 +85,30 @@ fn decodeBloc(globale: f32, echelle: u8, paquet: [8]u8, sortie: *[16]f32) void {
     for (paquet, 0..) |p, i| {
         const d_p = depaquete(p);
 
-        sortie[2 * i] = echelle_totale * decodeE2M1(d_p[0]);
-        sortie[2 * i + 1] = echelle_totale * decodeE2M1(d_p[1]);
-    }
-}
-
-const TABLE: [16]f32 = blk: {
-    var t: [16]f32 = undefined;
-    for (0..16) |i| t[i] = decodeE2M1(i);
-    break :blk t;
-};
-
-//decode NVFP4 mais en prenans le tableau en comptime
-fn decodeBloc_inline(globale: f32, echelle: u8, paquet: [8]u8, sortie: *[16]f32) void {
-    const echelle_decode = decodeE4M3(echelle);
-    const echelle_totale = globale * echelle_decode;
-
-    for (paquet, 0..) |p, i| {
-        const d_p = depaquete(p);
-
         sortie[2 * i] = echelle_totale * TABLE[d_p[0]];
         sortie[2 * i + 1] = echelle_totale * TABLE[d_p[1]];
     }
 }
 
-// A lancer depuis zig-lab, en RELEASE :
-//     zig run -OReleaseFast lecons/lecon9.zig
-//
-// Les donnees viennent de fetch_bench.py :
-//     bench/q_proj_packed.bin   8 388 608 o  -> 16 777 216 elements
-//     bench/q_proj_scales.bin   1 048 576 o  -> 1 048 576 blocs
-//     bench/q_proj_global.bin           4 o
+// A lancer depuis zig-lab :  zig run lecons/lecon10.zig
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
 
-    // 1. lire les trois fichiers de bench/
-    // 2. allouer la sortie : 16 777 216 f32 = 67 Mo
-    // 3. chronometrer le decodage de tous les blocs
-    // 4. refaire la mesure plusieurs fois, garder la meilleure
-    // 5. afficher : temps, valeurs/s, et debit en Go/s
-    const n = 16777216;
-    const bloc = 1048576;
+    // 1. l'echelle globale      : q_proj_global_scale.bin   (4 octets)
+    // 2. les 256 echelles E4M3  : q_proj_row0_scales.bin    (256 octets)
+    // 3. les quartets empaquetes: q_proj_row0_packed.bin    (2048 octets)
+    // 4. decoder les 256 blocs  -> 4096 f32
+    // 5. la reference           : q_proj_row0_attendu.f32   (16384 octets)
+    // 6. comparer : rien si c'est juste, l'indice fautif sinon
 
-    var out = try gpa.alloc(f32, n);
-    defer gpa.free(out);
+    var out: [4096]f32 = undefined;
 
-    const f_global = try open_tensor(io, gpa, "bench/q_proj_global.bin");
+    const f_global = try open_tensor(io, gpa, "q_proj_global_scale.bin");
     defer gpa.free(f_global);
-    const f_partial = try open_tensor(io, gpa, "bench/q_proj_scales.bin");
+    const f_partial = try open_tensor(io, gpa, "q_proj_row0_scales.bin");
     defer gpa.free(f_partial);
-    const f_fp4 = try open_tensor(io, gpa, "bench/q_proj_packed.bin");
+    const f_fp4 = try open_tensor(io, gpa, "q_proj_row0_packed.bin");
     defer gpa.free(f_fp4);
 
     std.debug.print("lens : {d}, {d}, {d}\n", .{ f_global.len, f_partial.len, f_fp4.len });
@@ -137,27 +116,21 @@ pub fn main(init: std.process.Init) !void {
     const global: f32 = @bitCast(f_global[0..4].*);
     std.debug.print("global = {d}\n", .{global});
 
-    const n_iter = 5;
-    var times: [n_iter]i64 = undefined;
-
-    for (0..n_iter) |iter| {
-        const start = std.Io.Clock.awake.now(init.io);
-        for (0..bloc) |i| {
-            const partial: u8 = f_partial[i];
-            const fp4: [8]u8 = f_fp4[8 * i ..][0..8].*;
-            decodeBloc_inline(global, partial, fp4, out[16 * i ..][0..16]);
-        }
-        const end = std.Io.Clock.awake.now(init.io);
-        const duration = std.Io.Timestamp.durationTo(start, end);
-        times[iter] = duration.toMicroseconds();
+    for (0..256) |i| {
+        const partial: u8 = f_partial[i];
+        const fp4: [8]u8 = f_fp4[8 * i ..][0..8].*;
+        decodeBloc(global, partial, fp4, out[16 * i ..][0..16]);
     }
 
-    const best = std.mem.min(i64, &times);
-    std.debug.print("Time Elapsed: {any} mirosecs, best = {d}\n", .{ times, best });
+    const f_ref = try open_tensor(io, gpa, "q_proj_row0_attendu.f32");
+    defer gpa.free(f_ref);
 
-    const o_total = (@as(f64, @floatFromInt(n)) / 2 + bloc + 4 + n * 4) / 1000;
-    const debit: f64 = o_total / @as(f64, @floatFromInt(best));
-    std.debug.print("Debit max = {d} Go/s\n", .{debit});
+    for (0..4096) |i| {
+        const ref: f32 = @bitCast(f_ref[4 * i ..][0..4].*);
+        const dec = out[i];
+        if (ref != dec)
+            std.debug.panic("Condition non respectee a l'indice {d} : ref = {d} =/= {d}\n", .{ i, ref, dec });
+    }
 
-    std.mem.doNotOptimizeAway(out);
+    std.debug.print("reference passee !!\n", .{});
 }
