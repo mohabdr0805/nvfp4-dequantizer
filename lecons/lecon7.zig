@@ -50,9 +50,9 @@ fn decodeE4M3(octet: u8) f32 {
 // Choix, pas deduction : les octets ne disent pas lequel porte l'indice pair.
 // A valider contre une reference a l'etape 3d.
 fn depaquete(octet: u8) [2]u4 {
-    const a: u4 = @intCast(octet & 15);
-    const b: u4 = @intCast(octet >> 4);
-    return .{ a, b };
+    const faible: u4 = @intCast(octet & 15);
+    const fort: u4 = @intCast(octet >> 4);
+    return .{ faible, fort };
 }
 
 // Un bloc NVFP4 : 16 elements E2M1 dans 8 octets, 1 octet d'echelle E4M3,
@@ -64,11 +64,8 @@ fn decodeBloc(globale: f32, echelle: u8, paquet: [8]u8, sortie: *[16]f32) void {
 
     for (paquet, 0..) |p, i| {
         const d_p = depaquete(p);
-        const fort: f32 = decodeE2M1(d_p[0]);
-        const faible: f32 = decodeE2M1(d_p[1]);
-
-        sortie[2 * i] = echelle_totale * fort;
-        sortie[2 * i + 1] = echelle_totale * faible;
+        sortie[2 * i] = echelle_totale * decodeE2M1(d_p[0]);
+        sortie[2 * i + 1] = echelle_totale * decodeE2M1(d_p[1]);
     }
 }
 

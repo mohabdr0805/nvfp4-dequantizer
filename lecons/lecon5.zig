@@ -24,9 +24,9 @@ fn decodeE2M1(code: u4) f32 {
 // 0xBA, renvoie (B, A), convention a verifier
 // Renvoie mtn (A, B) apres verification de la convention
 fn depaquete(octet: u8) [2]u4 {
-    const a: u4 = @intCast(octet & 15);
-    const b: u4 = @intCast(octet >> 4);
-    return .{ a, b };
+    const faible: u4 = @intCast(octet & 15);
+    const fort: u4 = @intCast(octet >> 4);
+    return .{ faible, fort };
 }
 
 pub fn main() void {
