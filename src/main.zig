@@ -50,8 +50,17 @@ pub fn main(init: std.process.Init) !void {
     const out = try safetensors.layout(gpa, object_map);
     defer gpa.free(out);
 
-    std.debug.print("out len : {d}", .{out.len});
+    std.debug.print("out len : {d}\n", .{out.len});
 
     const end_file = out[out.len - 1].end;
-    std.debug.print("size from out : {d}", .{end_file});
+    std.debug.print("size from out : {d}\n", .{end_file});
+
+    const file: std.Io.File = try std.Io.Dir.createFile(.cwd(), io, args[2], .{});
+    var buf: [64 * 1024]u8 = undefined;
+    var writer = file.writer(io, &buf);
+
+    try safetensors.writeHeader(gpa, &writer.interface, out);
+    try writer.flush();
+    //defer safetensor_file.deinit(io);
+
 }

@@ -27,7 +27,7 @@ const OutputTensor = struct {
 };
 
 pub fn readWholeFile(io: std.Io, gpa: std.mem.Allocator, filename: []const u8) ![]const u8 {
-    const file: std.Io.File = try std.Io.Dir.openFile(.cwd(), io, filename, .{ .mode = .read_only });
+    const file: std.Io.File = try std.Io.Dir.openFile(.cwd(), io, filename, .{ .mode = .write_only });
     defer file.close(io);
 
     var buffer: [4096]u8 = undefined;
@@ -109,15 +109,29 @@ pub fn layout(gpa: std.mem.Allocator, object_map: std.json.ObjectMap) ![]OutputT
     return res.toOwnedSlice(gpa);
 }
 
-//fn write(){
-//        try js.objectField(obj.name);
-//    try js.beginObject();
-//    try js.objectField("dtype");
-//    try js.write(obj.dtype);
-//    try js.objectField("shape");
-//    try js.write(obj.shape);
-//    try js.objectField("data_offsets");
-//    try js.write(.{ obj.start, obj.end });
-//    try js.endObject();
-//
-//}
+pub fn writeHeader(gpa: std.mem.Allocator, writer: *std.Io.Writer, tensors_layout: []OutputTensor) !void {
+    var acc = std.Io.Writer.Allocating.init(gpa);
+    defer acc.deinit();
+    var js: std.json.Stringify = .{ .writer = &acc.writer };
+
+    try js.beginObject();
+    for (tensors_layout) |tensor| {
+        try js.objectField(tensor.name);
+        try js.beginObject();
+        try js.objectField("dtype");
+        try js.write(tensor.dtype);
+        try js.objectField("shape");
+        try js.write(tensor.shape[0..tensor.rank]);
+        try js.objectField("data_offsets");
+        try js.write(.{ tensor.start, tensor.end });
+        try js.endObject();
+    }
+    try js.endObject();
+
+    try writer.writeInt(u64, acc.written().len, .little);
+    try writer.writeAll(acc.written());
+
+    //try writer.interface.writeInt(u64, , endian: Endian)
+    //const t = try writer.interface.writeAll(buf);
+    //defer gpa.free(t);
+}
