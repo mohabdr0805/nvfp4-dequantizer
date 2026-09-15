@@ -17,16 +17,16 @@ pub const SafetensorsFile = struct {
     }
 };
 
-const Sortie = struct {
-    nom: []const u8,
+const OutputTensor = struct {
+    name: []const u8,
     dtype: Dtype,
     rank: u8,
     shape: [4]u64,
-    debut: u64,
-    fin: u64,
+    start: u64,
+    end: u64,
 };
 
-pub fn open_tensor(io: std.Io, gpa: std.mem.Allocator, filename: []const u8) ![]const u8 {
+pub fn readWholeFile(io: std.Io, gpa: std.mem.Allocator, filename: []const u8) ![]const u8 {
     const file: std.Io.File = try std.Io.Dir.openFile(.cwd(), io, filename, .{ .mode = .read_only });
     defer file.close(io);
 
@@ -59,15 +59,15 @@ pub fn open(io: std.Io, gpa: std.mem.Allocator, filename: []const u8) !Safetenso
     return safetensors_file;
 }
 
-pub fn plan(gpa: std.mem.Allocator, object_map: std.json.ObjectMap) ![]Sortie {
-    var res: std.ArrayList(Sortie) = .empty;
+pub fn layout(gpa: std.mem.Allocator, object_map: std.json.ObjectMap) ![]OutputTensor {
+    var res: std.ArrayList(OutputTensor) = .empty;
 
     var cursor: u64 = 0;
     for (object_map.keys(), object_map.values()) |k, v| {
         if (!std.mem.endsWith(u8, k, "weight_scale") and !std.mem.endsWith(u8, k, "weight_scale_2")) {
             if (v.object.get("dtype")) |d| {
-                var obj = Sortie{
-                    .nom = k,
+                var obj = OutputTensor{
+                    .name = k,
                     .dtype = std.meta.stringToEnum(Dtype, d.string).?,
                     .rank = @intCast(v.object.get("shape").?.array.items.len),
                     .shape = blk: {
@@ -75,19 +75,19 @@ pub fn plan(gpa: std.mem.Allocator, object_map: std.json.ObjectMap) ![]Sortie {
                         for (0..v.object.get("shape").?.array.items.len) |i| t[i] = @intCast(v.object.get("shape").?.array.items[i].integer);
                         break :blk t;
                     },
-                    .debut = cursor,
-                    .fin = undefined,
+                    .start = cursor,
+                    .end = undefined,
                 };
                 if (obj.dtype == .U8) {
                     obj.dtype = .F32;
                     obj.shape[obj.rank - 1] = obj.shape[obj.rank - 1] * 2;
                 }
 
-                var factor: u64 = 0;
+                var elem_size: u64 = 0;
                 switch (obj.dtype) {
-                    .F32 => factor = 4,
-                    .BF16 => factor = 2,
-                    .F8_E4M3 => factor = 1,
+                    .F32 => elem_size = 4,
+                    .BF16 => elem_size = 2,
+                    .F8_E4M3 => elem_size = 1,
                     .U8 => {
                         std.debug.print("a U8 value went through condition", .{});
                     },
@@ -98,8 +98,8 @@ pub fn plan(gpa: std.mem.Allocator, object_map: std.json.ObjectMap) ![]Sortie {
                     shape_size = shape_size * obj.shape[i];
                 }
 
-                obj.fin = cursor + shape_size * factor;
-                cursor += obj.fin - obj.debut;
+                obj.end = cursor + shape_size * elem_size;
+                cursor += obj.end - obj.start;
 
                 try res.append(gpa, obj);
             }
@@ -110,14 +110,14 @@ pub fn plan(gpa: std.mem.Allocator, object_map: std.json.ObjectMap) ![]Sortie {
 }
 
 //fn write(){
-//        try js.objectField(obj.nom);
+//        try js.objectField(obj.name);
 //    try js.beginObject();
 //    try js.objectField("dtype");
 //    try js.write(obj.dtype);
 //    try js.objectField("shape");
 //    try js.write(obj.shape);
 //    try js.objectField("data_offsets");
-//    try js.write(.{ obj.debut, obj.fin });
+//    try js.write(.{ obj.start, obj.end });
 //    try js.endObject();
 //
 //}

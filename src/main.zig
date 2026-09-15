@@ -24,12 +24,12 @@ pub fn main(init: std.process.Init) !void {
 
     const object_map = values.object;
 
-    var compteurs = std.enums.EnumArray(safetensors.Dtype, u64).initFill(0);
+    var counts = std.enums.EnumArray(safetensors.Dtype, u64).initFill(0);
 
     for (object_map.values()) |v| {
         if (v.object.get("dtype")) |d| {
             if (std.meta.stringToEnum(safetensors.Dtype, d.string)) |ds| {
-                compteurs.getPtr(ds).* += 1;
+                counts.getPtr(ds).* += 1;
             } else std.debug.print("Type non reconnu : {s}\n", .{d.string});
         }
     }
@@ -41,17 +41,17 @@ pub fn main(init: std.process.Init) !void {
     //    }
     //}
 
-    var it = compteurs.iterator();
+    var it = counts.iterator();
     while (it.next()) |e|
         std.debug.print("{s:<9} {d:>3}\n", .{ @tagName(e.key), e.value.* });
 
     std.debug.print("total : {d}\n", .{count});
 
-    const out = try safetensors.plan(gpa, object_map);
+    const out = try safetensors.layout(gpa, object_map);
     defer gpa.free(out);
 
     std.debug.print("out len : {d}", .{out.len});
 
-    const end_file = out[out.len - 1].fin;
+    const end_file = out[out.len - 1].end;
     std.debug.print("size from out : {d}", .{end_file});
 }
