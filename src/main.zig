@@ -52,7 +52,7 @@ pub fn main(init: std.process.Init) !void {
 
     std.debug.print("out len : {d}\n", .{out.len});
 
-    const end_file = out[out.len - 1].end;
+    const end_file = out[out.len - 1].out_end;
     std.debug.print("size from out : {d}\n", .{end_file});
 
     const file: std.Io.File = try std.Io.Dir.createFile(.cwd(), io, args[2], .{});

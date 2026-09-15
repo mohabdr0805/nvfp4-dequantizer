@@ -22,8 +22,12 @@ const OutputTensor = struct {
     dtype: Dtype,
     rank: u8,
     shape: [4]u64,
-    start: u64,
-    end: u64,
+    in_start: u64,
+    in_end: u64,
+    offset_global: ?[2]u64,
+    offset_partial: ?[2]u64,
+    out_start: u64,
+    out_end: u64,
 };
 
 pub fn readWholeFile(io: std.Io, gpa: std.mem.Allocator, filename: []const u8) ![]const u8 {
@@ -59,6 +63,12 @@ pub fn open(io: std.Io, gpa: std.mem.Allocator, filename: []const u8) !Safetenso
     return safetensors_file;
 }
 
+fn readPair(obj: std.json.Value, key: []const u8) [2]u64 {
+    var t: [2]u64 = .{ 1, 1 };
+    for (0..2) |i| t[i] = @intCast(obj.object.get(key).?.array.items[i].integer);
+    return t;
+}
+
 pub fn layout(gpa: std.mem.Allocator, object_map: std.json.ObjectMap) ![]OutputTensor {
     var res: std.ArrayList(OutputTensor) = .empty;
 
@@ -66,25 +76,28 @@ pub fn layout(gpa: std.mem.Allocator, object_map: std.json.ObjectMap) ![]OutputT
     for (object_map.keys(), object_map.values()) |k, v| {
         if (!std.mem.endsWith(u8, k, "weight_scale") and !std.mem.endsWith(u8, k, "weight_scale_2")) {
             if (v.object.get("dtype")) |d| {
-                var obj = OutputTensor{
-                    .name = k,
-                    .dtype = std.meta.stringToEnum(Dtype, d.string).?,
-                    .rank = @intCast(v.object.get("shape").?.array.items.len),
-                    .shape = blk: {
-                        var t: [4]u64 = .{ 1, 1, 1, 1 };
-                        for (0..v.object.get("shape").?.array.items.len) |i| t[i] = @intCast(v.object.get("shape").?.array.items[i].integer);
-                        break :blk t;
-                    },
-                    .start = cursor,
-                    .end = undefined,
+                const in_offsets = readPair(v, "data_offsets");
+                var dtype = std.meta.stringToEnum(Dtype, d.string).?;
+                const rank: u8 = @intCast(v.object.get("shape").?.array.items.len);
+                var shape = blk: {
+                    var t: [4]u64 = .{ 1, 1, 1, 1 };
+                    for (0..v.object.get("shape").?.array.items.len) |i| t[i] = @intCast(v.object.get("shape").?.array.items[i].integer);
+                    break :blk t;
                 };
-                if (obj.dtype == .U8) {
-                    obj.dtype = .F32;
-                    obj.shape[obj.rank - 1] = obj.shape[obj.rank - 1] * 2;
+                var offset_global: ?[2]u64 = null;
+                var offset_partial: ?[2]u64 = null;
+                if (dtype == .U8) {
+                    dtype = .F32;
+                    shape[rank - 1] = shape[rank - 1] * 2;
+                    var buffer: [100]u8 = undefined;
+                    var name = try std.fmt.bufPrint(&buffer, "{s}_scale", .{k});
+                    offset_partial = readPair(object_map.get(name).?, "data_offsets");
+                    name = try std.fmt.bufPrint(&buffer, "{s}_scale_2", .{k});
+                    offset_global = readPair(object_map.get(name).?, "data_offsets");
                 }
 
                 var elem_size: u64 = 0;
-                switch (obj.dtype) {
+                switch (dtype) {
                     .F32 => elem_size = 4,
                     .BF16 => elem_size = 2,
                     .F8_E4M3 => elem_size = 1,
@@ -94,13 +107,25 @@ pub fn layout(gpa: std.mem.Allocator, object_map: std.json.ObjectMap) ![]OutputT
                 }
 
                 var shape_size: u64 = 1;
-                for (0..obj.rank) |i| {
-                    shape_size = shape_size * obj.shape[i];
+                for (0..rank) |i| {
+                    shape_size = shape_size * shape[i];
                 }
 
-                obj.end = cursor + shape_size * elem_size;
-                cursor += obj.end - obj.start;
+                const out_end = cursor + shape_size * elem_size;
+                const obj = OutputTensor{
+                    .name = k,
+                    .dtype = dtype,
+                    .rank = rank,
+                    .shape = shape,
+                    .in_start = in_offsets[0],
+                    .in_end = in_offsets[1],
+                    .offset_global = offset_global,
+                    .offset_partial = offset_partial,
+                    .out_start = cursor,
+                    .out_end = out_end,
+                };
 
+                cursor += obj.out_end - obj.out_start;
                 try res.append(gpa, obj);
             }
         }
@@ -123,7 +148,7 @@ pub fn writeHeader(gpa: std.mem.Allocator, writer: *std.Io.Writer, tensors_layou
         try js.objectField("shape");
         try js.write(tensor.shape[0..tensor.rank]);
         try js.objectField("data_offsets");
-        try js.write(.{ tensor.start, tensor.end });
+        try js.write(.{ tensor.out_start, tensor.out_end });
         try js.endObject();
     }
     try js.endObject();
