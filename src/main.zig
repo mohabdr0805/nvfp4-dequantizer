@@ -62,5 +62,6 @@ pub fn main(init: std.process.Init) !void {
     try safetensors.writeHeader(gpa, &writer.interface, out);
     try writer.flush();
     //defer safetensor_file.deinit(io);
-
+    try safetensors.writeDecode(io, gpa, args[1], &writer.interface, out);
+    try writer.flush();
 }
