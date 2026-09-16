@@ -1,6 +1,8 @@
 const std = @import("std");
 const nvp4 = @import("nvfp4.zig");
 
+pub const Mode = enum { read_only, no_write, full };
+
 pub const Dtype = enum { U8, F8_E4M3, F32, BF16 };
 
 pub const SafetensorsFile = struct {
@@ -162,7 +164,7 @@ pub fn writeHeader(gpa: std.mem.Allocator, writer: *std.Io.Writer, tensors_layou
     //defer gpa.free(t);
 }
 
-pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read: []const u8, writer: *std.Io.Writer, tensors_layout: []OutputTensor) !void {
+pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read: []const u8, writer: *std.Io.Writer, tensors_layout: []OutputTensor, mode: Mode) !void {
     const file: std.Io.File = try std.Io.Dir.openFile(.cwd(), io, file_read, .{ .mode = .read_only });
     const buffer = try gpa.alloc(u8, 4096);
     defer gpa.free(buffer);
@@ -193,11 +195,14 @@ pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read: []const u8, wr
                     const read_len: u64 = @min(read, chunk_size);
                     try reader.interface.readSliceAll(chunk_buffer[0..read_len]);
                     const u8_d = chunk_buffer[0..read_len];
-                    for (0..read_len / 8) |i| {
-                        const partial: u8 = partials[cpt / 8 + i];
-                        const fp4: [8]u8 = u8_d[8 * i ..][0..8].*;
-                        nvp4.decodeBlockTable(global, partial, fp4, out[16 * i ..][0..16]);
+                    if (mode != Mode.read_only) {
+                        for (0..read_len / 8) |i| {
+                            const partial: u8 = partials[cpt / 8 + i];
+                            const fp4: [8]u8 = u8_d[8 * i ..][0..8].*;
+                            nvp4.decodeBlockTable(global, partial, fp4, out[16 * i ..][0..16]);
+                        }
                     }
+
                     try writer.writeAll(std.mem.sliceAsBytes(out[0 .. read_len * 2]));
                     read -= read_len;
                 }

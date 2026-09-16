@@ -9,8 +9,12 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try init.minimal.args.toSlice(arena);
     if (args.len < 2) {
-        std.debug.print("Erreur : Veuillez passer au moins un argument.\n", .{});
+        std.debug.print("Erreur : Veuillez passer le fichier d'entree et de sortie.\n", .{});
         return;
+    }
+    var mode = safetensors.Mode.full;
+    if (args.len > 3) {
+        mode = std.meta.stringToEnum(safetensors.Mode, args[3]).?;
     }
 
     const safetensor_file = try safetensors.open(io, gpa, args[1]);
@@ -56,12 +60,26 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("size from out : {d}\n", .{end_file});
 
     const file: std.Io.File = try std.Io.Dir.createFile(.cwd(), io, args[2], .{});
-    var buf: [64 * 1024]u8 = undefined;
+    var buf: [8 * 1024 * 1024]u8 = undefined;
+
+    var discarding = std.Io.Writer.Discarding.init(&.{});
     var writer = file.writer(io, &buf);
 
-    try safetensors.writeHeader(gpa, &writer.interface, out);
-    try writer.flush();
-    //defer safetensor_file.deinit(io);
-    try safetensors.writeDecode(io, gpa, args[1], &writer.interface, out);
-    try writer.flush();
+    // full ecrit vraiment ; les autres modes jettent, pour mesurer sans le disque
+    const sink = if (mode == .full) &writer.interface else &discarding.writer;
+
+    const t0 = std.Io.Clock.awake.now(io);
+
+    try safetensors.writeHeader(gpa, sink, out);
+    try safetensors.writeDecode(io, gpa, args[1], sink, out, mode);
+    try sink.flush();
+
+    const t1 = std.Io.Clock.awake.now(io);
+    const us = std.Io.Timestamp.durationTo(t0, t1).toMicroseconds();
+    const s = @as(f64, @floatFromInt(us)) / 1e6;
+    std.debug.print("temps : {d:.2} s   debit : {d:.2} Go/s\n", .{
+        s,
+        @as(f64, @floatFromInt(end_file)) / 1e9 / s,
+    });
+    std.debug.print("octets jetes : {d}\n", .{discarding.fullCount()});
 }
