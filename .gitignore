@@ -19,3 +19,7 @@ asm.s
 *.obj
 asm.s
 isole.zig
+
+# sorties du programme, jamais versionnees
+/test
+*.st

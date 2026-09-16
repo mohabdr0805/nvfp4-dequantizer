@@ -1,7 +1,7 @@
 const std = @import("std");
 const nvp4 = @import("nvfp4.zig");
 
-pub const Mode = enum { read_only, no_write, full };
+pub const Mode = enum { read_only, no_write, write, full };
 
 pub const Dtype = enum { U8, F8_E4M3, F32, BF16 };
 
@@ -158,10 +158,6 @@ pub fn writeHeader(gpa: std.mem.Allocator, writer: *std.Io.Writer, tensors_layou
 
     try writer.writeInt(u64, acc.written().len, .little);
     try writer.writeAll(acc.written());
-
-    //try writer.interface.writeInt(u64, , endian: Endian)
-    //const t = try writer.interface.writeAll(buf);
-    //defer gpa.free(t);
 }
 
 pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read: []const u8, writer: *std.Io.Writer, tensors_layout: []OutputTensor, mode: Mode) !void {
@@ -216,6 +212,23 @@ pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read: []const u8, wr
                 try writer.writeAll(chunk_buffer[0..read_len]);
                 read -= read_len;
             }
+        }
+    }
+}
+
+// Plafond d'ecriture, ecrit le volume que le plan prevoit, sans rien lire ni decoder
+pub fn writeOnly(gpa: std.mem.Allocator, writer: *std.Io.Writer, tensors_layout: []OutputTensor) !void {
+    const chunk_size = 4 * 1024 * 1024;
+    const buf = try gpa.alloc(u8, chunk_size);
+    defer gpa.free(buf);
+    @memset(buf, 0);
+
+    for (tensors_layout) |tensor| {
+        var left = tensor.out_end - tensor.out_start;
+        while (left > 0) {
+            const n = @min(left, chunk_size);
+            try writer.writeAll(buf[0..n]);
+            left -= n;
         }
     }
 }

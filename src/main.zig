@@ -38,13 +38,6 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    //for (object_map.keys(), object_map.values()) |k, v| {
-    //    if (v.object.get("dtype")) |d| {
-    //        std.debug.print("{s} -> {f}\n", .{ k, std.json.fmt(v, .{}) });
-    //        _ = d;
-    //    }
-    //}
-
     var it = counts.iterator();
     while (it.next()) |e|
         std.debug.print("{s:<9} {d:>3}\n", .{ @tagName(e.key), e.value.* });
@@ -65,13 +58,18 @@ pub fn main(init: std.process.Init) !void {
     var discarding = std.Io.Writer.Discarding.init(&.{});
     var writer = file.writer(io, &buf);
 
-    // full ecrit vraiment ; les autres modes jettent, pour mesurer sans le disque
-    const sink = if (mode == .full) &writer.interface else &discarding.writer;
+    // full et write touchent le disque ; les autres jettent, pour mesurer sans lui
+    const ecrit = mode == .full or mode == .write;
+    const sink = if (ecrit) &writer.interface else &discarding.writer;
 
     const t0 = std.Io.Clock.awake.now(io);
 
-    try safetensors.writeHeader(gpa, sink, out);
-    try safetensors.writeDecode(io, gpa, args[1], sink, out, mode);
+    if (mode == .write) {
+        try safetensors.writeOnly(gpa, sink, out);
+    } else {
+        try safetensors.writeHeader(gpa, sink, out);
+        try safetensors.writeDecode(io, gpa, args[1], sink, out, mode);
+    }
     try sink.flush();
 
     const t1 = std.Io.Clock.awake.now(io);
