@@ -67,8 +67,8 @@ pub fn main(init: std.process.Init) !void {
     if (mode == .write) {
         try safetensors.writeOnly(gpa, sink, out);
     } else {
-        try safetensors.writeHeader(gpa, sink, out);
-        try safetensors.writeDecode(io, gpa, args[1], sink, out, mode);
+        const write_offset = try safetensors.writeHeader(gpa, sink, out);
+        try safetensors.writeDecode(io, gpa, args[1], args[2], write_offset, out, mode);
     }
     try sink.flush();
 
