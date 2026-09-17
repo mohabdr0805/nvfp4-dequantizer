@@ -214,8 +214,8 @@ fn processTensor(io: std.Io, gpa: std.mem.Allocator, file_read: std.Io.File, fil
                         nvp4.decodeBlockTable(global, partial, fp4, buffers.out[16 * i ..][0..16]);
                     }
                 }
-
-                try file_write.writePositionalAll(io, std.mem.sliceAsBytes(buffers.out[0 .. read_len * 2]), write_offset + tensor.out_start + cpt * 8);
+                if (mode == .full or mode == .write)
+                    try file_write.writePositionalAll(io, std.mem.sliceAsBytes(buffers.out[0 .. read_len * 2]), write_offset + tensor.out_start + cpt * 8);
                 read -= read_len;
             }
         }
@@ -226,13 +226,32 @@ fn processTensor(io: std.Io, gpa: std.mem.Allocator, file_read: std.Io.File, fil
             const cpt = tensor_size - read;
             const read_len = @min(read, buffers.chunk_size);
             try reader.interface.readSliceAll(buffers.chunk_buffer[0..read_len]);
-            try file_write.writePositionalAll(io, buffers.chunk_buffer[0..read_len], write_offset + tensor.out_start + cpt);
+            if (mode == .full or mode == .write)
+                try file_write.writePositionalAll(io, buffers.chunk_buffer[0..read_len], write_offset + tensor.out_start + cpt);
             read -= read_len;
         }
     }
 }
 
-pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u8, file_write_name: []const u8, write_offset: u64, tensors_layout: []OutputTensor, mode: Mode) !void {
+fn worker(io: std.Io, gpa: std.mem.Allocator, file_read: std.Io.File, file_write: std.Io.File, read_offset: u64, write_offset: u64, tensors_layout: []OutputTensor, next: *std.atomic.Value(usize), worker_id: u64, errs: []?anyerror, mode: Mode) void {
+    var buffers = Buffers.init(gpa) catch |e| {
+        errs[worker_id] = e;
+        return;
+    };
+    defer buffers.deinit(gpa);
+
+    while (true) {
+        const idx = next.fetchAdd(1, std.builtin.AtomicOrder.monotonic);
+        if (idx >= tensors_layout.len) break;
+        const tensor = tensors_layout[idx];
+        processTensor(io, gpa, file_read, file_write, read_offset, write_offset, &buffers, tensor, mode) catch |e| {
+            errs[worker_id] = e;
+            return;
+        };
+    }
+}
+
+pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u8, file_write_name: []const u8, write_offset: u64, tensors_layout: []OutputTensor, n_workers: u64, mode: Mode) !void {
     const file_read: std.Io.File = try std.Io.Dir.openFile(.cwd(), io, file_read_name, .{ .mode = .read_only });
     const buffer = try gpa.alloc(u8, 4096);
     defer gpa.free(buffer);
@@ -240,11 +259,25 @@ pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u
     const read_offset = try reader.interface.takeInt(u64, .little) + 8;
 
     const file_write: std.Io.File = try std.Io.Dir.createFile(.cwd(), io, file_write_name, .{});
-    var buffers = try Buffers.init(gpa);
-    defer buffers.deinit(gpa);
 
-    for (tensors_layout) |tensor| {
-        try processTensor(io, gpa, file_read, file_write, read_offset, write_offset, &buffers, tensor, mode);
+    var group: std.Io.Group = .init;
+    defer group.cancel(io);
+    var next: std.atomic.Value(usize) = .init(0);
+
+    const errs = try gpa.alloc(?anyerror, n_workers);
+    defer gpa.free(errs);
+    @memset(errs, null);
+
+    for (0..n_workers) |w| {
+        try group.concurrent(io, worker, .{ io, gpa, file_read, file_write, read_offset, write_offset, tensors_layout, &next, w, errs, mode });
+    }
+    try group.await(io);
+
+    for (0..n_workers) |w| {
+        if (errs[w]) |err| {
+            std.debug.print("error at worker {d}\n", .{w});
+            return err;
+        }
     }
 }
 

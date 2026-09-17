@@ -7,14 +7,21 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
 
+    //default values
+    var n_workers: u64 = 1;
+    var mode = safetensors.Mode.full;
+
     const args = try init.minimal.args.toSlice(arena);
     if (args.len < 2) {
         std.debug.print("Erreur : Veuillez passer le fichier d'entree et de sortie.\n", .{});
         return;
     }
-    var mode = safetensors.Mode.full;
+
     if (args.len > 3) {
-        mode = std.meta.stringToEnum(safetensors.Mode, args[3]).?;
+        n_workers = try std.fmt.parseInt(u32, args[3], 10);
+    }
+    if (args.len > 4) {
+        mode = std.meta.stringToEnum(safetensors.Mode, args[4]).?;
     }
 
     const safetensor_file = try safetensors.open(io, gpa, args[1]);
@@ -68,7 +75,7 @@ pub fn main(init: std.process.Init) !void {
         try safetensors.writeOnly(gpa, sink, out);
     } else {
         const write_offset = try safetensors.writeHeader(gpa, sink, out);
-        try safetensors.writeDecode(io, gpa, args[1], args[2], write_offset, out, mode);
+        try safetensors.writeDecode(io, gpa, args[1], args[2], write_offset, out, n_workers, mode);
     }
     try sink.flush();
 
