@@ -33,6 +33,31 @@ const OutputTensor = struct {
     out_end: u64,
 };
 
+const Buffers = struct {
+    const Self = @This();
+    process_buffer: []u8, // 4 Ko, pour le lecteur
+    chunk_size: u64,
+    chunk_buffer: []u8, // 4 Mo
+    out: []f32, // 8 M flottants
+
+    fn init(gpa: std.mem.Allocator) !Buffers {
+        const process_buffer = try gpa.alloc(u8, 4096);
+        const chunk_size: u64 = 4 * 1024 * 1024;
+        return Buffers{
+            .process_buffer = process_buffer,
+            .chunk_size = chunk_size,
+            .chunk_buffer = try gpa.alloc(u8, chunk_size),
+            .out = try gpa.alloc(f32, 2 * chunk_size),
+        };
+    }
+
+    fn deinit(self: *const Self, gpa: std.mem.Allocator) void {
+        defer gpa.free(self.process_buffer);
+        defer gpa.free(self.chunk_buffer);
+        defer gpa.free(self.out);
+    }
+};
+
 pub fn readWholeFile(io: std.Io, gpa: std.mem.Allocator, filename: []const u8) ![]const u8 {
     const file: std.Io.File = try std.Io.Dir.openFile(.cwd(), io, filename, .{ .mode = .write_only });
     defer file.close(io);
@@ -162,54 +187,46 @@ pub fn writeHeader(gpa: std.mem.Allocator, writer: *std.Io.Writer, tensors_layou
     return @as(u64, acc.written().len + 8);
 }
 
-fn processTensor(io: std.Io, gpa: std.mem.Allocator, file_read: std.Io.File, file_write: std.Io.File, read_offset: u64, write_offset: u64, tensor: OutputTensor, mode: Mode) !void {
-    const process_buffer = try gpa.alloc(u8, 4096);
-    defer gpa.free(process_buffer);
-    var process_reader = file_read.reader(io, process_buffer);
-
-    const chunk_size: u64 = 4 * 1024 * 1024;
-    var chunk_buffer = try gpa.alloc(u8, chunk_size);
-    defer gpa.free(chunk_buffer);
-    var out = try gpa.alloc(f32, 2 * chunk_size);
-    defer gpa.free(out);
+fn processTensor(io: std.Io, gpa: std.mem.Allocator, file_read: std.Io.File, file_write: std.Io.File, read_offset: u64, write_offset: u64, buffers: *Buffers, tensor: OutputTensor, mode: Mode) !void {
+    var reader = file_read.reader(io, buffers.process_buffer);
 
     const tensor_size = tensor.in_end - tensor.in_start;
     if (tensor.offset_partial) |p| {
         if (tensor.offset_global) |g| {
             const partial_size = p[1] - p[0];
-            try process_reader.seekTo(read_offset + p[0]);
-            const partials = try process_reader.interface.readAlloc(gpa, partial_size);
+            try reader.seekTo(read_offset + p[0]);
+            const partials = try reader.interface.readAlloc(gpa, partial_size);
             defer gpa.free(partials);
-            try process_reader.seekTo(read_offset + g[0]);
-            const global: f32 = @bitCast(try process_reader.interface.takeInt(u32, .little));
+            try reader.seekTo(read_offset + g[0]);
+            const global: f32 = @bitCast(try reader.interface.takeInt(u32, .little));
 
-            try process_reader.seekTo(read_offset + tensor.in_start);
+            try reader.seekTo(read_offset + tensor.in_start);
             var read = tensor_size;
             while (read > 0) {
                 const cpt = tensor_size - read;
-                const read_len: u64 = @min(read, chunk_size);
-                try process_reader.interface.readSliceAll(chunk_buffer[0..read_len]);
-                const u8_d = chunk_buffer[0..read_len];
+                const read_len: u64 = @min(read, buffers.chunk_size);
+                try reader.interface.readSliceAll(buffers.chunk_buffer[0..read_len]);
+                const u8_d = buffers.chunk_buffer[0..read_len];
                 if (mode != .read_only) {
                     for (0..read_len / 8) |i| {
                         const partial: u8 = partials[cpt / 8 + i];
                         const fp4: [8]u8 = u8_d[8 * i ..][0..8].*;
-                        nvp4.decodeBlockTable(global, partial, fp4, out[16 * i ..][0..16]);
+                        nvp4.decodeBlockTable(global, partial, fp4, buffers.out[16 * i ..][0..16]);
                     }
                 }
 
-                try file_write.writePositionalAll(io, std.mem.sliceAsBytes(out[0 .. read_len * 2]), write_offset + tensor.out_start + cpt * 8);
+                try file_write.writePositionalAll(io, std.mem.sliceAsBytes(buffers.out[0 .. read_len * 2]), write_offset + tensor.out_start + cpt * 8);
                 read -= read_len;
             }
         }
     } else {
-        try process_reader.seekTo(read_offset + tensor.in_start);
+        try reader.seekTo(read_offset + tensor.in_start);
         var read = tensor_size;
         while (read > 0) {
             const cpt = tensor_size - read;
-            const read_len = @min(read, chunk_size);
-            try process_reader.interface.readSliceAll(chunk_buffer[0..read_len]);
-            try file_write.writePositionalAll(io, chunk_buffer[0..read_len], write_offset + tensor.out_start + cpt);
+            const read_len = @min(read, buffers.chunk_size);
+            try reader.interface.readSliceAll(buffers.chunk_buffer[0..read_len]);
+            try file_write.writePositionalAll(io, buffers.chunk_buffer[0..read_len], write_offset + tensor.out_start + cpt);
             read -= read_len;
         }
     }
@@ -223,9 +240,11 @@ pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u
     const read_offset = try reader.interface.takeInt(u64, .little) + 8;
 
     const file_write: std.Io.File = try std.Io.Dir.createFile(.cwd(), io, file_write_name, .{});
+    var buffers = try Buffers.init(gpa);
+    defer buffers.deinit(gpa);
 
     for (tensors_layout) |tensor| {
-        try processTensor(io, gpa, file_read, file_write, read_offset, write_offset, tensor, mode);
+        try processTensor(io, gpa, file_read, file_write, read_offset, write_offset, &buffers, tensor, mode);
     }
 }
 
