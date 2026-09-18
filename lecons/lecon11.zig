@@ -56,6 +56,18 @@ const E2M1_VALUES: [16]f32 = blk: {
     break :blk t;
 };
 
+fn decodeBloc(globale: f32, echelle: u8, paquet: [8]u8, sortie: *[16]f32) void {
+    const echelle_decode = decodeE4M3(echelle);
+    const echelle_totale = globale * echelle_decode;
+
+    for (paquet, 0..) |p, i| {
+        const d_p = unpack(p);
+
+        sortie[2 * i] = echelle_totale * decodeE2M1(d_p[0]);
+        sortie[2 * i + 1] = echelle_totale * decodeE2M1(d_p[1]);
+    }
+}
+
 // La reference : la version en service, celle qu'il faut egaler bit pour bit.
 fn decodeBlockTable(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f32) void {
     const block_scale = decodeE4M3(scale);
@@ -79,20 +91,63 @@ fn decodeBlockTable(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f32) v
 // les 8 octets contigus -> un @Vector(16, u4 ou u8) par & 15, >> 4 et entrelacement,
 // puis les 16 lectures de table et la multiplication.
 fn decodeBlockGather(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f32) void {
-    _ = global_scale;
-    _ = scale;
-    _ = bytes;
-    out.* = @splat(0);
+    const block_scale = decodeE4M3(scale);
+    const total_scale = global_scale * block_scale;
+
+    const broadcast = @shuffle(u8, bytes, undefined, @Vector(16, u8){ 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7 });
+    const mask: @Vector(16, bool) = .{ true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false };
+
+    const low = broadcast & @as(@Vector(16, u8), @splat(15));
+    const high = broadcast >> @as(@Vector(16, u8), @splat(4));
+
+    const tmp: @Vector(16, u8) = @select(u8, mask, low, high);
+    var res = @as(@Vector(16, f32), @splat(0));
+
+    inline for (0..16) |i| {
+        res[i] = E2M1_VALUES[tmp[i]];
+    }
+
+    res = res * @as(@Vector(16, f32), @splat(total_scale));
+
+    out.* = res;
 }
 
 // VARIANTE 2 — A ECRIRE. Pas de table du tout : le motif f32 est reconstruit
 // arithmetiquement depuis les bits du code, @select traite e == 0, @bitCast rend
 // des f32. Meme depaquetage vectoriel que la variante 1.
 fn decodeBlockSimd(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f32) void {
-    _ = global_scale;
-    _ = scale;
-    _ = bytes;
-    out.* = @splat(0);
+    const block_scale = decodeE4M3(scale);
+    const total_scale = global_scale * block_scale;
+
+    const broadcast = @shuffle(u8, bytes, undefined, @Vector(16, u8){ 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7 });
+    const mask: @Vector(16, bool) = .{ true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false };
+
+    const low = broadcast & @as(@Vector(16, u8), @splat(15));
+    const high = broadcast >> @as(@Vector(16, u8), @splat(4));
+
+    const tmp: @Vector(16, u32) = @select(u8, mask, low, high);
+
+    var sign: @Vector(16, u32) = (tmp >> @as(@Vector(16, u8), @splat(3)));
+    const decimal: @Vector(16, u32) = tmp & @as(@Vector(16, u8), @splat(1));
+
+    const ee: @Vector(16, u32) = (tmp >> @as(@Vector(16, u8), @splat(1))) & @as(@Vector(16, u8), @splat(3));
+
+    sign = sign << @as(@Vector(16, u8), @splat(31));
+    const n_decimal = decimal << @as(@Vector(16, u8), @splat(22));
+
+    const ee_zero_decimal = ee + (@as(@Vector(16, u32), @splat(63)) << @as(@Vector(16, u32), @splat(24)));
+    const ee_zero = @select(u32, decimal == @as(@Vector(16, u32), @splat(0)), ee, ee_zero_decimal);
+
+    const ee_nonzero = (ee + @as(@Vector(16, u8), @splat(126))) << @as(@Vector(16, u8), @splat(23));
+    const ee_nonzero_decimal = ee_nonzero | n_decimal;
+
+    const u_decoded: @Vector(16, u32) = @select(u32, ee == @as(@Vector(16, u32), @splat(0)), ee_zero, ee_nonzero_decimal);
+
+    const decoded: @Vector(16, u32) = sign | u_decoded;
+    var res: @Vector(16, f32) = @as(@Vector(16, f32), @bitCast(decoded));
+    res = res * @as(@Vector(16, f32), @splat(total_scale));
+
+    out.* = res;
 }
 
 const GLOBALES = [_]f32{ 1.0, 0.5, 0.0078125, 3.7e-3, 448.0 };
