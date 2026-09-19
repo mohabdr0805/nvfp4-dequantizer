@@ -233,13 +233,16 @@ fn processTensor(io: std.Io, gpa: std.mem.Allocator, file_read: std.Io.File, fil
     }
 }
 
-fn workerLoop(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u8, file_write: std.Io.File, write_offset: u64, tensors_layout: []OutputTensor, next: *std.atomic.Value(usize), worker_id: u64, errs: []?anyerror, mode: Mode) !void {
+fn workerLoop(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u8, file_write_name: []const u8, write_offset: u64, tensors_layout: []OutputTensor, next: *std.atomic.Value(usize), worker_id: u64, errs: []?anyerror, mode: Mode) !void {
     const file_read: std.Io.File = try std.Io.Dir.openFile(.cwd(), io, file_read_name, .{ .mode = .read_only });
     defer file_read.close(io);
     const buffer = try gpa.alloc(u8, 4096);
     defer gpa.free(buffer);
     var reader = file_read.reader(io, buffer);
     const read_offset = try reader.interface.takeInt(u64, .little) + 8;
+
+    const file_write: std.Io.File = try std.Io.Dir.openFile(.cwd(), io, file_write_name, .{ .mode = .write_only });
+    defer file_write.close(io);
 
     var buffers = Buffers.init(gpa) catch |e| {
         errs[worker_id] = e;
@@ -258,14 +261,15 @@ fn workerLoop(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u8, fi
     }
 }
 
-fn worker(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u8, file_write: std.Io.File, write_offset: u64, tensors_layout: []OutputTensor, next: *std.atomic.Value(usize), worker_id: u64, errs: []?anyerror, mode: Mode) void {
-    workerLoop(io, gpa, file_read_name, file_write, write_offset, tensors_layout, next, worker_id, errs, mode) catch |e| {
+fn worker(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u8, file_write_name: []const u8, write_offset: u64, tensors_layout: []OutputTensor, next: *std.atomic.Value(usize), worker_id: u64, errs: []?anyerror, mode: Mode) void {
+    workerLoop(io, gpa, file_read_name, file_write_name, write_offset, tensors_layout, next, worker_id, errs, mode) catch |e| {
         errs[worker_id] = e;
     };
 }
 
 pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u8, file_write_name: []const u8, write_offset: u64, tensors_layout: []OutputTensor, n_workers: u64, mode: Mode) !void {
-    const file_write: std.Io.File = try std.Io.Dir.createFile(.cwd(), io, file_write_name, .{});
+    const create_file_write = try std.Io.Dir.createFile(.cwd(), io, file_write_name, .{});
+    defer create_file_write.close(io);
 
     var group: std.Io.Group = .init;
     defer group.cancel(io);
@@ -276,7 +280,7 @@ pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u
     @memset(errs, null);
 
     for (0..n_workers) |w| {
-        try group.concurrent(io, worker, .{ io, gpa, file_read_name, file_write, write_offset, tensors_layout, &next, w, errs, mode });
+        try group.concurrent(io, worker, .{ io, gpa, file_read_name, file_write_name, write_offset, tensors_layout, &next, w, errs, mode });
     }
     try group.await(io);
 
