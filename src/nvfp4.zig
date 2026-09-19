@@ -87,3 +87,96 @@ pub fn decodeBlockTable(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f3
         out[2 * i + 1] = total_scale * E2M1_VALUES[d_p[1]];
     }
 }
+
+// Same block, but the nibbles are unpacked on a vector instead of one at a time.
+// LLVM then drops its gather and extracts lane by lane: 9.1 GB/s against 11.6.
+pub fn decodeBlockGather(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f32) void {
+    const block_scale = decodeE4M3(scale);
+    const total_scale = global_scale * block_scale;
+
+    const broadcast = @shuffle(u8, bytes, undefined, @Vector(16, u8){ 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7 });
+    const mask: @Vector(16, bool) = .{ true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false };
+
+    const low = broadcast & @as(@Vector(16, u8), @splat(15));
+    const high = broadcast >> @as(@Vector(16, u8), @splat(4));
+
+    const tmp: @Vector(16, u8) = @select(u8, mask, low, high);
+    var res = @as(@Vector(16, f32), @splat(0));
+
+    inline for (0..16) |i| {
+        res[i] = E2M1_VALUES[tmp[i]];
+    }
+
+    res = res * @as(@Vector(16, f32), @splat(total_scale));
+
+    out.* = res;
+}
+
+// No table: the f32 bit pattern is built from the code with shifts, and @select
+// handles the e = 0 case. Never leaves the vector, and still 9.9 GB/s against 11.6.
+pub fn decodeBlockSimd(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f32) void {
+    const block_scale = decodeE4M3(scale);
+    const total_scale = global_scale * block_scale;
+
+    const broadcast = @shuffle(u8, bytes, undefined, @Vector(16, u8){ 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7 });
+    const mask: @Vector(16, bool) = .{ true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false };
+
+    const low = broadcast & @as(@Vector(16, u8), @splat(15));
+    const high = broadcast >> @as(@Vector(16, u8), @splat(4));
+
+    const tmp: @Vector(16, u32) = @select(u8, mask, low, high);
+
+    var sign: @Vector(16, u32) = (tmp >> @as(@Vector(16, u8), @splat(3)));
+    const decimal: @Vector(16, u32) = tmp & @as(@Vector(16, u8), @splat(1));
+
+    const ee: @Vector(16, u32) = (tmp >> @as(@Vector(16, u8), @splat(1))) & @as(@Vector(16, u8), @splat(3));
+
+    sign = sign << @as(@Vector(16, u8), @splat(31));
+    const n_decimal = decimal << @as(@Vector(16, u8), @splat(22));
+
+    const ee_zero_decimal = ee + (@as(@Vector(16, u32), @splat(63)) << @as(@Vector(16, u32), @splat(24)));
+    const ee_zero = @select(u32, decimal == @as(@Vector(16, u32), @splat(0)), ee, ee_zero_decimal);
+
+    const ee_nonzero = (ee + @as(@Vector(16, u8), @splat(126))) << @as(@Vector(16, u8), @splat(23));
+    const ee_nonzero_decimal = ee_nonzero | n_decimal;
+
+    const u_decoded: @Vector(16, u32) = @select(u32, ee == @as(@Vector(16, u32), @splat(0)), ee_zero, ee_nonzero_decimal);
+
+    const decoded: @Vector(16, u32) = sign | u_decoded;
+    var res: @Vector(16, f32) = @as(@Vector(16, f32), @bitCast(decoded));
+    res = res * @as(@Vector(16, f32), @splat(total_scale));
+
+    out.* = res;
+}
+
+pub const TENSOR_SCALES = [_]f32{ 1.0, 0.5, 0.0078125, 3.7e-3, 448.0 };
+
+// A block filled with one byte covers all 16 codes in 16 turns, in both nibble
+// positions. Bit patterns are compared, not floats: -0.0 and +0.0 must not pass.
+fn matchesTable(comptime candidate: fn (f32, u8, [8]u8, *[16]f32) void) !void {
+    var expected: [16]f32 = undefined;
+    var got: [16]f32 = undefined;
+
+    for (TENSOR_SCALES) |g| {
+        for (0..256) |s| {
+            for (0..256) |b| {
+                const bytes: [8]u8 = @splat(@intCast(b));
+                decodeBlockTable(g, @intCast(s), bytes, &expected);
+                candidate(g, @intCast(s), bytes, &got);
+                for (0..16) |i| {
+                    const a: u32 = @bitCast(expected[i]);
+                    const o: u32 = @bitCast(got[i]);
+                    if (a != o) return error.Divergence;
+                }
+            }
+        }
+    }
+}
+
+test "decodeBlockGather matches the table" {
+    try matchesTable(decodeBlockGather);
+}
+
+test "decodeBlockSimd matches the table" {
+    try matchesTable(decodeBlockSimd);
+}

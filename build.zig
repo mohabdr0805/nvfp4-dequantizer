@@ -107,6 +107,17 @@ pub fn build(b: *std.Build) void {
         bench_cmd.addArgs(args);
     }
 
+    const decode = b.addExecutable(.{
+        .name = "nvfp4-decode-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bench_decode.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    const decode_step = b.step("decode-bench", "Compare the three block decoders");
+    decode_step.dependOn(&b.addRunArtifact(decode).step);
+
     // Creates an executable that will run `test` blocks from the executable's
     // root module. Note that test executables only test one module at a time,
     // hence why we have to create two separate ones.
@@ -122,6 +133,16 @@ pub fn build(b: *std.Build) void {
     // make the two of them run in parallel.
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_tests.step);
+
+    // addTest only picks up the root file, so the library needs its own artifact.
+    const nvfp4_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/nvfp4.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(nvfp4_tests).step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
