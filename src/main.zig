@@ -8,12 +8,12 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
 
     //default values
-    var n_workers: u64 = 1;
+    var n_workers: u64 = 8;
     var mode = safetensors.Mode.full;
 
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 2) {
-        std.debug.print("Erreur : Veuillez passer le fichier d'entree et de sortie.\n", .{});
+    if (args.len < 3) {
+        std.debug.print("Error : Please provide input and output file.\n", .{});
         return;
     }
 
