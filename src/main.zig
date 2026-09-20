@@ -8,7 +8,7 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
 
     //default values
-    var n_workers: u64 = 8;
+    var n_workers: u64 = 1;
     var mode = safetensors.Mode.full;
 
     const args = try init.minimal.args.toSlice(arena);
@@ -49,28 +49,18 @@ pub fn main(init: std.process.Init) !void {
     while (it.next()) |e|
         std.debug.print("{s:<9} {d:>3}\n", .{ @tagName(e.key), e.value.* });
 
-    std.debug.print("total : {d}\n", .{count});
+    std.debug.print("total :  {d}\n", .{count});
 
     const out = try safetensors.layout(gpa, object_map);
     defer gpa.free(out);
 
-    std.debug.print("out len : {d}\n", .{out.len});
-
-    const end_file = out[out.len - 1].out_end;
-    std.debug.print("size from out : {d}\n", .{end_file});
-
     const file: std.Io.File = try std.Io.Dir.createFile(.cwd(), io, args[2], .{});
     var buf: [8 * 1024 * 1024]u8 = undefined;
 
-    var discarding = std.Io.Writer.Discarding.init(&.{});
     var writer = file.writer(io, &buf);
-
-    // full et write touchent le disque ; les autres jettent, pour mesurer sans lui
-    const ecrit = mode == .full or mode == .write;
-    const sink = if (ecrit) &writer.interface else &discarding.writer;
+    const sink = &writer.interface;
 
     const t0 = std.Io.Clock.awake.now(io);
-
     if (mode == .write) {
         try safetensors.writeOnly(gpa, sink, out);
     } else {
@@ -82,9 +72,10 @@ pub fn main(init: std.process.Init) !void {
     const t1 = std.Io.Clock.awake.now(io);
     const us = std.Io.Timestamp.durationTo(t0, t1).toMicroseconds();
     const s = @as(f64, @floatFromInt(us)) / 1e6;
+
+    const end_file = out[out.len - 1].out_end;
     std.debug.print("temps : {d:.2} s   debit : {d:.2} Go/s\n", .{
         s,
         @as(f64, @floatFromInt(end_file)) / 1e9 / s,
     });
-    std.debug.print("octets jetes : {d}\n", .{discarding.fullCount()});
 }
