@@ -12,7 +12,7 @@ zig build test            # decode tests
 zig build decode-bench    # compare decoders bench
 ```
 
-`threads` 8 by default. `mode` values : `full` (default), `read_only` / `no_write` / `write`
+`threads` 1 by default. `mode` values : `full` (default), `read_only` / `no_write` / `write`
 to test one step at a time.
 
 ## Format
@@ -56,13 +56,16 @@ Number of threads, with 4.98 GB input :
 |---|---|---|---|---|
 | read, empty cache | 2.44 s | 1.80 s | 1.61 s | 1.51 s |
 | read + decode | 3.79 s | 2.65 s | 2.34 s | 2.39 s |
-| full | _todo_ | | | _todo_ |
+| full | **25.64 s** | 39.05 s | 44.56 s | 51.96 s |
 
-The decoding saturates at 4 out of 20 threads, which is a memory bandwidth bottleneck, not compute.
+The decoding gets faster and saturates at 4 out of 20 threads, which is a memory bandwidth bottleneck, not compute.
+
+However, a single thread is faster in full mode. The writing takes 85% of the time and doesn't parallelise,
+because NTFS serialises file extensions.
 
 A warm system cache reads at 6 GB/s, three times the disk : all the reads above were taken after emptying it with `outils/videcache.zig`.
 
-Sustained writes drift by ±25% over a day, with the same code and same input, from 20.6 to 33.8 s. So each measure is bracketed
+Sustained writes drift over a day with the same code and same input, from 20.6 to 33.8 s. So each measure is bracketed
 by a single thread control run of the same configuration.
 
 ## Parallelism
