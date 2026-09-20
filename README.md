@@ -74,12 +74,10 @@ by a single thread control run of the same configuration.
 Then the workers share an atomic counter, and work with positional reads and writes,
 without any cursor, order or locks.
 
-**One file descriptor per worker.** When they were sharing the same one, workers
-serialised on Windows, 8 threads ran slower than one.
-
-Trying parallelised read on Python, performance improved with more threads, so the device
-was fine, and something was wrong on my code : each worker needed its own read and write
-descriptors.
+**One file descriptor per worker.** When they were sharing the same one, reads did not scale
+at all and adding threads changed nothing. Found by rewriting the read loop in Python, where
+the disk did scale with threads; so the ceiling was in my code, not in the device.
+With one each, a cold read goes from 2.44 s to 1.51 s on 8 threads.
 
 ## Verification
 
