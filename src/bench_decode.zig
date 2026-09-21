@@ -1,6 +1,4 @@
 // Throughput of the three block decoders, on a working set that stays in L2.
-// Measured on 128 MB first: 9.6 / 9.0 / 8.0 GB/s, all three limited by the memory
-// bus. A compute bench has to fit in cache or it measures the bus, not the code.
 const std = @import("std");
 const nvfp4 = @import("nvfp4.zig");
 
@@ -8,12 +6,7 @@ const BLOCKS: usize = 4096; // 32 KB packed -> 256 KB of f32
 const ROUNDS: usize = 2000;
 const RUNS: usize = 7;
 
-fn pass(
-    comptime decode: fn (f32, u8, [8]u8, *[16]f32) void,
-    packed_bytes: []const u8,
-    scales: []const u8,
-    out: []f32,
-) void {
+fn pass(comptime decode: fn (f32, u8, [8]u8, *[16]f32) void, packed_bytes: []const u8, scales: []const u8, out: []f32) void {
     for (0..scales.len) |i| {
         decode(1.0, scales[i], packed_bytes[8 * i ..][0..8].*, out[16 * i ..][0..16]);
     }

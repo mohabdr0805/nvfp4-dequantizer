@@ -35,10 +35,10 @@ const OutputTensor = struct {
 
 const Buffers = struct {
     const Self = @This();
-    process_buffer: []u8, // 4 Ko, pour le lecteur
+    process_buffer: []u8, // 4 KB for small reads
     chunk_size: u64,
-    chunk_buffer: []u8, // 4 Mo
-    out: []f32, // 8 M flottants
+    chunk_buffer: []u8, // 4 MB for chunk reads
+    out: []f32, // 8 M floats
 
     fn init(gpa: std.mem.Allocator) !Buffers {
         const process_buffer = try gpa.alloc(u8, 4096);
@@ -292,7 +292,7 @@ pub fn writeDecode(io: std.Io, gpa: std.mem.Allocator, file_read_name: []const u
     }
 }
 
-// Plafond d'ecriture, ecrit le volume que le plan prevoit, sans rien lire ni decoder
+// For write only mode, no read or decode
 pub fn writeOnly(gpa: std.mem.Allocator, writer: *std.Io.Writer, tensors_layout: []OutputTensor) !void {
     const chunk_size = 4 * 1024 * 1024;
     const buf = try gpa.alloc(u8, chunk_size);

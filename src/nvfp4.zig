@@ -21,7 +21,6 @@ pub fn decodeE2M1(code: u4) f32 {
     return res;
 }
 
-// E4M3, OCP "FN" variant: 1 sign, 4 exponent (bias 7), 3 mantissa.
 // No infinity; NaN only when exponent is 15 and mantissa 7, hence max 448.
 pub fn decodeE4M3(byte: u8) f32 {
     const sign = byte >> 7 != 0; // sign bit
@@ -46,8 +45,7 @@ pub fn decodeE4M3(byte: u8) f32 {
     return res;
 }
 
-// element[0] is the LOW nibble. Not deducible from the bytes: settled by
-// correlating against the unquantised model, 0.9954 vs 0.0384 (outils/oracle.py).
+// element[0] is the LOW nibble.
 pub fn unpack(byte: u8) [2]u4 {
     const low: u4 = @intCast(byte & 15);
     const high: u4 = @intCast(byte >> 4);
@@ -55,7 +53,6 @@ pub fn unpack(byte: u8) [2]u4 {
 }
 
 // One block: 16 E2M1 elements in 8 bytes, one E4M3 scale, one FP32 tensor scale.
-// Both scales folded once per block: half the multiplications, one extra ULP.
 pub fn decodeBlock(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f32) void {
     const block_scale = decodeE4M3(scale);
     const total_scale = global_scale * block_scale;
@@ -74,8 +71,6 @@ const E2M1_VALUES: [16]f32 = blk: {
     break :blk t;
 };
 
-// Same, with the 16 values read from a compile-time table. The win is the branch
-// that disappears, which lets LLVM vectorise the loop: 0.76 -> 12.9 GB/s.
 pub fn decodeBlockTable(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f32) void {
     const block_scale = decodeE4M3(scale);
     const total_scale = global_scale * block_scale;
@@ -88,8 +83,6 @@ pub fn decodeBlockTable(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f3
     }
 }
 
-// Same block, but the nibbles are unpacked on a vector instead of one at a time.
-// LLVM then drops its gather and extracts lane by lane: 9.1 GB/s against 11.6.
 pub fn decodeBlockGather(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f32) void {
     const block_scale = decodeE4M3(scale);
     const total_scale = global_scale * block_scale;
@@ -112,8 +105,6 @@ pub fn decodeBlockGather(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f
     out.* = res;
 }
 
-// No table: the f32 bit pattern is built from the code with shifts, and @select
-// handles the e = 0 case. Never leaves the vector, and still 9.9 GB/s against 11.6.
 pub fn decodeBlockSimd(global_scale: f32, scale: u8, bytes: [8]u8, out: *[16]f32) void {
     const block_scale = decodeE4M3(scale);
     const total_scale = global_scale * block_scale;

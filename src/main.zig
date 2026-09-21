@@ -7,7 +7,7 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
 
-    //default values
+    // Default values
     var n_workers: u64 = 1;
     var mode = safetensors.Mode.full;
 
